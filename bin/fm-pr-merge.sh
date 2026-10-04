@@ -729,7 +729,7 @@ github_verify_mergeable() {
 
   # shellcheck disable=SC2016  # GraphQL variables are literal query syntax.
   if ! json=$(gh api graphql \
-    -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){state isDraft mergeable mergeStateStatus headRefOid baseRefName statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name workflowName status conclusion startedAt checkSuite{workflowRun{workflow{databaseId}}}} ... on StatusContext{context state}}}}}}}' \
+    -f query='query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){state isDraft mergeable mergeStateStatus headRefOid baseRefName statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion startedAt checkSuite{workflowRun{workflow{databaseId}}}} ... on StatusContext{context state}}}}}}}' \
     -F "owner=$PR_OWNER" -F "repo=$PR_REPO" -F "number=$PR_NUMBER" \
     --jq '.data.repository.pullRequest | .statusCheckRollup = (.statusCheckRollup.contexts.nodes | map(if .__typename == "CheckRun" then . + {workflowId: (.checkSuite.workflowRun.workflow.databaseId // "")} else . end))' \
     2>/dev/null) \
