@@ -212,7 +212,9 @@ case "${1:-} ${2:-}" in
     exit "$merge_rc"
     ;;
   "api graphql")
-    if [ -f "${FM_TEST_GH_GRAPHQL_FAIL:-}" ]; then
+    # This fixture models the post-merge outcome query failing while the
+    # pre-merge statusCheckRollup query remains readable.
+    if [ -f "${FM_TEST_GH_GRAPHQL_FAIL:-}" ] && [[ " $* " != *statusCheckRollup* ]]; then
       echo 'error: could not reach the GitHub API' >&2
       exit 1
     fi
