@@ -112,13 +112,18 @@ JSON
 # of "-" is emitted as JSON null. Args: name status conclusion [startedAt]
 # [completedAt]
 check_run() {
-  local name=$1 status=$2 conclusion=$3 started=${4:--} completed=${5:-${4:--}}
+  local name=$1 status=$2 conclusion=$3 started=${4:--} completed=${5:-${4:--}} workflow=${6:-CI}
   local conclusion_json='null' started_json='null' completed_json='null'
   [ "$conclusion" = - ] || conclusion_json="\"$conclusion\""
   [ "$started" = - ] || started_json="\"$started\""
   [ "$completed" = - ] || completed_json="\"$completed\""
-  printf '{"__typename":"CheckRun","name":"%s","status":"%s","conclusion":%s,"startedAt":%s,"completedAt":%s}' \
-    "$name" "$status" "$conclusion_json" "$started_json" "$completed_json"
+  if [ "$workflow" = - ]; then
+    printf '{"__typename":"CheckRun","name":"%s","status":"%s","conclusion":%s,"startedAt":%s,"completedAt":%s}' \
+      "$name" "$status" "$conclusion_json" "$started_json" "$completed_json"
+  else
+    printf '{"__typename":"CheckRun","name":"%s","workflowName":"%s","status":"%s","conclusion":%s,"startedAt":%s,"completedAt":%s}' \
+      "$name" "$workflow" "$status" "$conclusion_json" "$started_json" "$completed_json"
+  fi
 }
 
 status_context() {
@@ -2671,6 +2676,50 @@ test_superseded_failed_check_run_no_longer_refuses() {
   pass "fm-pr-merge merges when a failed check run was replaced by a passing re-run"
 }
 
+test_same_name_checks_from_different_workflows_do_not_supersede() {
+  local case_dir rc head
+  head=dededededededededededededededededededede
+  case_dir=$(make_case github-same-name-different-workflows)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(check_run 'dependency-backed Python contracts' COMPLETED FAILURE 2026-01-01T00:00:01Z 2026-01-01T00:00:02Z workflow-A)" \
+    "$(check_run 'dependency-backed Python contracts' COMPLETED SUCCESS 2026-01-01T00:00:09Z 2026-01-01T00:00:10Z workflow-B)"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/91 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "github-same-name-different-workflows: a green workflow must not supersede a red workflow"
+  assert_grep "check 'dependency-backed Python contracts' is not green" "$case_dir/stderr" \
+    "github-same-name-different-workflows: the red check was not reported"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "github-same-name-different-workflows: cross-workflow green run hid the failure"
+  pass "fm-pr-merge keeps same-named failures red across different workflows"
+}
+
+test_check_run_without_workflow_identity_cannot_be_superseded() {
+  local case_dir rc head
+  head=dededededededededededededededededededede
+  case_dir=$(make_case github-missing-workflow-identity)
+  mkdir -p "$case_dir/wt"
+  add_gh_mocks "$case_dir" "$head"
+  write_github_rollup_json "$case_dir" "$head" \
+    "$(check_run ci COMPLETED FAILURE 2026-01-01T00:00:01Z 2026-01-01T00:00:02Z -)" \
+    "$(check_run ci COMPLETED SUCCESS 2026-01-01T00:00:09Z)"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/92 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "github-missing-workflow-identity: a missing identity must stay red"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "github-missing-workflow-identity: an identified run hid the unscoped failure"
+  pass "fm-pr-merge does not supersede a run without workflow identity"
+}
+
 # Legacy status contexts remain independent from check runs, even when their
 # reported names match.
 test_check_runs_never_supersede_status_contexts() {
@@ -3854,6 +3903,8 @@ test_backend_override_bypasses_unreadable_user_config
 test_github_red_checks_refuse_and_allow_red_waives_named
 test_github_draft_or_unreadable_draft_state_refuses
 test_superseded_failed_check_run_no_longer_refuses
+test_same_name_checks_from_different_workflows_do_not_supersede
+test_check_run_without_workflow_identity_cannot_be_superseded
 test_check_runs_never_supersede_status_contexts
 test_current_failed_check_run_still_refuses
 test_late_finishing_old_success_does_not_hide_current_failure

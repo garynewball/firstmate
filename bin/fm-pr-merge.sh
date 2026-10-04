@@ -566,17 +566,20 @@ FIELDS
 # CLEAN mergeStateStatus instead of refusing a pull request GitHub considers
 # mergeable.
 #
-# Supersession applies only among check runs with the same reported name. A
-# name is dropped from the red set only when every non-green run is COMPLETED,
-# has a whole-second UTC startedAt, and started strictly before a green run.
+# Supersession applies only among check runs with the same workflowName and
+# reported name. Runs missing workflowName are grouped alone and cannot
+# supersede another run. A group is dropped from the red set only when every
+# non-green run is COMPLETED, has a whole-second UTC startedAt, and started
+# strictly before a green run.
 # Status contexts are never grouped or superseded, and every non-green one is
 # reported independently. A still-running, queued, undated, or tied check run
-# stays red. A name whose runs are all green needs no timestamp, while a name
+# stays red. A group whose runs are all green needs no timestamp, while a group
 # with no green run stays red.
 #
 # The reported name is also what --allow-red matches. An unnamed check run is
 # grouped alone and can neither supersede nor be superseded, because unrelated
-# unnamed checks must not be treated as one.
+# unnamed checks must not be treated as one. workflowName is supplied by the
+# CheckRun entries in gh's statusCheckRollup JSON.
 github_checks_not_green() {
   local json=$1
   printf '%s' "$json" | jq -r '
@@ -592,11 +595,12 @@ github_checks_not_green() {
             {
               kind: "check_run",
               name: (.name // ""),
+              workflow: (.workflowName // ""),
               completed: (.status == "COMPLETED"),
               ok: (.status == "COMPLETED" and (.conclusion == "SUCCESS" or .conclusion == "NEUTRAL" or .conclusion == "SKIPPED")),
               at: (.startedAt | settled_at)
             }
-            | . + {group: (if .name == "" then ["", $i] else [.name, -1] end)}
+            | . + {group: (if .name == "" or .workflow == "" then [.workflow, .name, $i] else [.workflow, .name, -1] end)}
           else
             {kind: "status_context", name: (.context // ""), ok: (.state == "SUCCESS")}
           end
