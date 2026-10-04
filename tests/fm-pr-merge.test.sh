@@ -220,18 +220,41 @@ case "${1:-} ${2:-}" in
     fi
     case " $* " in
       *statusCheckRollup*)
+        graphql_jq=''
+        while [ "$#" -gt 0 ]; do
+          if [ "$1" = --jq ]; then
+            graphql_jq=${2:-}
+            shift 2
+          else
+            shift
+          fi
+        done
+        [ -n "$graphql_jq" ] || exit 2
         if [ -n "${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" ]; then
           call_n=$(( $(cat "$FM_TEST_GH_MERGEABLE_CALLS" 2>/dev/null || echo 0) + 1 ))
           printf '%s\n' "$call_n" > "$FM_TEST_GH_MERGEABLE_CALLS"
           call_m=$(sed -n "${call_n}p" "$FM_TEST_GH_MERGEABLE_SEQUENCE")
           [ -n "$call_m" ] || call_m=$(tail -n1 "$FM_TEST_GH_MERGEABLE_SEQUENCE")
           read -r call_m call_c <<< "$call_m"
-          jq -c --arg m "$call_m" --arg c "${call_c:-}" \
+          fixture_json=$(jq -c --arg m "$call_m" --arg c "${call_c:-}" \
             '.mergeable = $m | if $c != "" then .statusCheckRollup[0].conclusion = $c else . end' \
-            "$FM_TEST_GH_VIEW_JSON"
+            "$FM_TEST_GH_VIEW_JSON")
         else
-          cat "$FM_TEST_GH_VIEW_JSON"
+          fixture_json=$(cat "$FM_TEST_GH_VIEW_JSON")
         fi
+        printf '%s' "$fixture_json" | jq -c '
+          . as $pr
+          | ($pr.statusCheckRollup // []) as $checks
+          | $pr
+          | .statusCheckRollup = {contexts: {nodes: [$checks[] |
+              if .__typename == "CheckRun" then
+                . as $check
+                | del(.workflowId, .workflowName)
+                | . + {checkSuite: {workflowRun: {workflow: {databaseId: $check.workflowId}}}}
+              else . end
+            ]}}
+          | {data: {repository: {pullRequest: .}}}
+        ' | jq -c "$graphql_jq"
         if [ -f "${FM_TEST_AWAY_RECORD_AFTER_VIEW:-}" ]; then
           if [ -s "${FM_TEST_AWAY_RECORD_AFTER_VIEW}" ]; then
             cp "$FM_TEST_AWAY_RECORD_AFTER_VIEW" "$FM_STATE_OVERRIDE/.afk-contract"
